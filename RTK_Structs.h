@@ -38,7 +38,7 @@
 /* some constants about Compass satellite signal */
 #define  FG1_BDS  1561.098E6               /* B1信号的基准频率 */
 #define  FG2_BDS  1207.140E6               /* B2信号的基准频率 */
-#define  FG3_BDS  1268.520E6               /* B2信号的基准频率 */
+#define  FG3_BDS  1268.520E6               /* B3信号的基准频率 */
 #define  FC12R    (FG1_BDS/FG2_BDS)       /* FG1_BDS/FG2_BDS */
 #define  FC12R2   (FC12R*FC12R)           /* FG1_BDS^2/FG2_BDS^2 */
 #define  FC13R    (FG1_BDS/FG3_BDS)       /* FG1_BDS^2/FG3_BDS^2 */
@@ -52,6 +52,14 @@
 #define MAXGPSNUM  32
 #define MAXBDSNUM 63
 #define MAXRAWLEN 40960
+
+/*标准气象元素*/
+#define TEMPERATURE0 288.16
+#define PRESSURE0 1013.25
+#define HIGHT0 0.0
+#define RH0 0.5
+
+
 
 
 /* 导航卫星系统定义 */
@@ -382,7 +390,7 @@ bool CompSatClkOff( const int Prn, const GNSSSys Sys, const GPSTIME* t, GPSEPHRE
 bool CompGPSSatPVT( const int Prn, const GPSTIME* t, const GPSEPHREC* Eph, SATMIDRES* Mid);
 bool CompBDSSatPVT( const int Prn, const GPSTIME* t, const GPSEPHREC* Eph, SATMIDRES* Mid);
 void ComputeGPSSatOrbitAtSignalTrans(const EPOCHOBS* Epk, GPSEPHREC* GpsEph, GPSEPHREC* BDSEph, double RcvPos[3], SATMIDRES* MidRes);
-double hopfield(double hgt,double elev);
+double Hopfield(double H,double Elev);
 
 // SPP & SPV
 void DetectOutlier(EPOCHOBS* Obs);  // 线性组合探测粗差

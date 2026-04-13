@@ -92,7 +92,12 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 	i = 4;
 
 	int satNum = 0;
-	*obs = EPOCHOBS(); // 彻底初始化历元数据，防止上个历元数据残留
+	obs->SatNum = 0;
+	for (int k = 0; k < MAXCHANNUM; k++) {
+		obs->SatObs[k] = SATOBS();    // 重置观测值
+		obs->SatPVT[k] = SATMIDRES(); // 重置卫星位置等计算结果
+	}
+
 	obs->Time.Week = (short)week;
 	obs->Time.SecOfWeek = ms / 1000.0;
 
