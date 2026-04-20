@@ -17,10 +17,18 @@ bool CompSatClkOff(const int Prn, const GNSSSys Sys, const GPSTIME* t, GPSEPHREC
 
     if (eph == NULL || eph->PRN == 0) return false;
 
-    double dt = GetDiffTime(t, &eph->TOC);
+    // 根据系统调整时间，用于计算相对于 TOC/TOE 的 dt
+    GPSTIME t_sys = *t;
+    if (Sys == BDS) {
+        t_sys.SecOfWeek -= 14.0;
+        t_sys.Week -= 1356;
+        if (t_sys.SecOfWeek < 0) { t_sys.SecOfWeek += 604800.0; t_sys.Week--; }
+    }
 
-    Mid->SatClkOft = eph->ClkBias + eph->ClkDrift * dt + eph->ClkDriftRate * dt * dt;
-    Mid->SatClkSft = eph->ClkDrift + 2 * eph->ClkDriftRate * dt;
+    double dt = GetDiffTime(&t_sys, &eph->TOC);
+
+    Mid->SatClkOft = eph->ClkBias + eph->ClkDrift * dt + eph->ClkDriftRate * dt * dt;//钟差
+    Mid->SatClkSft = eph->ClkDrift + 2 * eph->ClkDriftRate * dt;//钟速
 
     Mid->Tgd1 = eph->TGD1;
     if (Sys == GPS) {
@@ -47,6 +55,10 @@ bool CompGPSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
         E = M + eph->e * sin(E);
         if (fabs(E - E_old) < 1.0e-12) break;
     }
+    
+    double F = -2.0 * sqrt(GM_Earth) / (C_Light * C_Light);
+    Mid->SatClkOft += F * eph->e * eph->SqrtA * sin(E);//钟差的相对论改正
+
     double v = atan2(sqrt(1 - eph->e * eph->e) * sin(E), cos(E) - eph->e);//true anomaly
     double phi = eph->omega + v;//argument of latitude
     double du = eph->Cuc * cos(2 * phi) + eph->Cus * sin(2 * phi);//second harmonic
@@ -66,10 +78,13 @@ bool CompGPSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
     Mid->SatPos[2] = y_plane * sin(i);
 
     double dE=n/(1-eph->e*cos(E));//eccentric anomaly rate
+    
+    Mid->SatClkSft += F * eph->e * eph->SqrtA * cos(E) * dE;//钟速的相对论改正
+
     double dv=dE*sqrt(1-eph->e*eph->e)/(1-eph->e*cos(E));//true anomaly rate
     di=eph->iDot+2*dv*(eph->Cis*cos(2*phi)-eph->Cic*sin(2*phi));//Corrected Inclination Angle Rate
     du=dv+2*dv*(eph->Cus*cos(2*phi)-eph->Cuc*sin(2*phi));//Corrected Argument of Latitude Rate
-    dr=eph->e*eph->SqrtA*eph->SqrtA*dE+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
+    dr=eph->e*eph->SqrtA*eph->SqrtA*dE*sin(E)+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
     double dL=eph->OMEGADot-Omega_WGS;//Longitude of Ascending Node Rate
     
     double dx_plane=dr*cos(u)-r*du*sin(u);//In-plane xvelocity
@@ -95,8 +110,10 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
         t_bds.SecOfWeek += 604800.0;
         t_bds.Week -= 1;
     }
-
-    double tk = GetDiffTime(&t_bds, &eph->TOE);//观测历元到参考历元的时间差
+    // 关键修正：确保 tk 是相对于 TOE 的合理数值（应为正负几小时内）
+    double tk = GetDiffTime(&t_bds, &eph->TOE);
+    if (tk > 302400.0) tk -= 604800.0;
+    else if (tk < -302400.0) tk += 604800.0;
 
 
     double n0 = sqrt(GM_BDS) / pow(eph->SqrtA, 3);//卫星平均角速度
@@ -108,6 +125,10 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
         E = M + eph->e * sin(E);
         if (fabs(E - E_old) < 1.0e-12) break;
     }
+
+    double F = -2.0 * sqrt(GM_BDS) / (C_Light * C_Light);
+    Mid->SatClkOft += F * eph->e * eph->SqrtA * sin(E);//钟差的相对论改正
+
     double v = atan2(sqrt(1 - eph->e * eph->e) * sin(E), cos(E) - eph->e);//真近点角
     double phi = eph->omega + v;//计算纬度幅角
     double du = eph->Cuc * cos(2 * phi) + eph->Cus * sin(2 * phi);//纬度幅角改正项
@@ -140,10 +161,11 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
         Mid->SatPos[2] = zt;
 
         double dE=n/(1-eph->e*cos(E));//eccentric anomaly rate
+        Mid->SatClkSft += F * eph->e * eph->SqrtA * cos(E) * dE;//钟速的相对论改正
         double dv=dE*sqrt(1-eph->e*eph->e)/(1-eph->e*cos(E));//true anomaly rate
         di=eph->iDot+2*dv*(eph->Cis*cos(2*phi)-eph->Cic*sin(2*phi));//Corrected Inclination Angle Rate
         du=dv+2*dv*(eph->Cus*cos(2*phi)-eph->Cuc*sin(2*phi));//Corrected Argument of Latitude Rate
-        dr=eph->e*eph->SqrtA*eph->SqrtA*dE+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
+        dr=eph->e*eph->SqrtA*eph->SqrtA*dE*sin(E)+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
         double dL=eph->OMEGADot;//Longitude of Ascending Node Rate
 
         double dx_plane=dr*cos(u)-r*du*sin(u);//In-plane xvelocity
@@ -171,10 +193,11 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
 
         /*速度计算同GPS*/
         double dE=n/(1-eph->e*cos(E));//eccentric anomaly rate
+        Mid->SatClkSft += F * eph->e * eph->SqrtA * cos(E) * dE;//钟速的相对论改正
         double dv=dE*sqrt(1-eph->e*eph->e)/(1-eph->e*cos(E));//true anomaly rate
         di=eph->iDot+2*dv*(eph->Cis*cos(2*phi)-eph->Cic*sin(2*phi));//Corrected Inclination Angle Rate
         du=dv+2*dv*(eph->Cus*cos(2*phi)-eph->Cuc*sin(2*phi));//Corrected Argument of Latitude Rate
-        dr=eph->e*eph->SqrtA*eph->SqrtA*dE+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
+        dr=eph->e*eph->SqrtA*eph->SqrtA*dE*sin(E)+2*dv*(eph->Crs*cos(2*phi)-eph->Crc*sin(2*phi));//Corrected Radius Rate
         double dL=eph->OMEGADot-Omega_BDS;//Longitude of Ascending Node Rate
 
         double dx_plane=dr*cos(u)-r*du*sin(u);//In-plane xvelocity

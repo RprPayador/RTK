@@ -1,44 +1,140 @@
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <cstring>
 #include "RTK_Structs.h"
 
 int main()
 {
-    FILE* fp, * fout;
+    FILE* fp;
+    std::ofstream fout("D:\\GNSS Algorithm\\RTK_Raw\\result.txt");
     unsigned char Buff[MAXRAWLEN];
-    int Len, LenRead, val;
-    EPOCHOBS Obs;
+    int Len = 0, LenRead, val;
+    
+    EPOCHOBS Obs; 
+    memset(&Obs, 0, sizeof(Obs));
     GPSEPHREC GpsEph[MAXGPSNUM], BdsEph[MAXBDSNUM];
 
-    if ((fp = fopen("D:\\GNSS Algorithm\\RTK\\RTK\\oem719-202603111200.bin", "rb")) == NULL) { // C4996
+    memset(GpsEph, 0, sizeof(GpsEph));
+    memset(BdsEph, 0, sizeof(BdsEph));
+
+    if ((fp = fopen("D:\\GNSS Algorithm\\RTK\\RTK\\oem719-202603111200.bin", "rb")) == NULL) { 
         printf("The file 'oem719-202603111200.bin' was not opened\n");
         return 0;
     }
 
-    Len = 0;
+    if (!fout.is_open()) {
+        printf("Failed to open result.txt for writing\n");
+    }
+
+    printf("Starting SPP Debugging Flow...\n");
+
+    int total_epochs = 0;
+    int success_epochs = 0;
+
     do {
         LenRead = fread(Buff + Len, sizeof(unsigned char), MAXRAWLEN - Len, fp);
+        if (LenRead <= 0 && Len <= 0) break;
         Len = Len + LenRead;
 
+        int initial_len = Len;
         val = DecodeNovOem7Dat(Buff, Len, &Obs, GpsEph, BdsEph);
 
-        if (val == 1) { // 成功解码出一个历元的观测值
-            for (int i = 0; i < Obs.SatNum; i++) {
-                int prn = Obs.SatObs[i].Prn;
-                GNSSSys sys = Obs.SatObs[i].System;
-
-                // 计算卫星钟差和位置，计算出的结果保存在 Obs.SatPVT[i] 中
-                CompSatClkOff(prn, sys, &Obs.Time, GpsEph, BdsEph, &Obs.SatPVT[i]);
-                if (sys == GPS) {
-                    CompGPSSatPVT(prn, &Obs.Time, &GpsEph[prn - 1], &Obs.SatPVT[i]);
-                }
-                else if (sys == BDS) {
-                    CompBDSSatPVT(prn, &Obs.Time, &BdsEph[prn - 1], &Obs.SatPVT[i]);
-                }
+        if (val == 2) {
+            // 如果 SPP 还没成功过，用 PSRPOS 作为初值
+            PPRESULT psr_res;
+            decode_psrpos(Buff, &psr_res);
+            if (Obs.Pos[0] == 0) {
+                Obs.Pos[0] = psr_res.Position[0];
+                Obs.Pos[1] = psr_res.Position[1];
+                Obs.Pos[2] = psr_res.Position[2];
             }
         }
 
-    } while (!feof(fp));
+        if (val == 1) { 
+            total_epochs++;
+            // 2. 粗差探测
+            DetectOutlier(&Obs);
+
+            // 统计通过探测的卫星
+            int detected_sats = 0;
+            for(int i=0; i<Obs.SatNum; i++) if(Obs.SatObs[i].Valid) detected_sats++;
+
+            // 3. 单点定位解算
+            PPRESULT Res;
+            RAWDAT Raw;
+            for (int i = 0; i < MAXGPSNUM; i++) Raw.GpsEph[i] = GpsEph[i];
+            for (int i = 0; i < MAXBDSNUM; i++) Raw.BdsEph[i] = BdsEph[i];
+
+             if (SPP(&Obs, &Raw, &Res)) {
+                success_epochs++;
+                
+                // 4. 详细卫星信息输出 (对齐教师日志格式)
+                fout << std::fixed << std::uppercase;
+                for (int i = 0; i < Obs.SatNum; i++) {
+                    if (!Obs.SatPVT[i].Valid) continue;
+                    SATOBS& sat = Obs.SatObs[i];
+                    SATMIDRES& pvt = Obs.SatPVT[i];
+                    
+                    fout << (sat.System == GPS ? 'G' : 'C') << std::setfill('0') << std::setw(2) << (int)sat.Prn << std::setfill(' ')
+                         << " X=" << std::setw(14) << std::setprecision(3) << pvt.SatPos[0]
+                         << " Y=" << std::setw(14) << std::setprecision(3) << pvt.SatPos[1]
+                         << " Z=" << std::setw(14) << std::setprecision(3) << pvt.SatPos[2]
+                         << " Clk=" << std::scientific << std::setw(15) << std::setprecision(6) << pvt.SatClkOft
+                         << std::fixed << " Vx=" << std::setw(11) << std::setprecision(4) << pvt.SatVel[0]
+                         << " Vy=" << std::setw(11) << std::setprecision(4) << pvt.SatVel[1]
+                         << " Vz=" << std::setw(11) << std::setprecision(4) << pvt.SatVel[2]
+                         << " Clkd=" << std::scientific << std::setw(15) << std::setprecision(5) << pvt.SatClkSft
+                         << std::fixed << " PIF=" << std::setw(14) << std::setprecision(4) << Obs.ComObs[i].PIF
+                         << " Trop=" << std::setw(8) << std::setprecision(3) << pvt.TropCorr
+                         << " E=" << std::setw(7) << std::setprecision(3) << pvt.Elevation * 180.0 / 3.1415926535898 << "deg" << std::endl;
+                }
+
+                // 5. SPP 汇总输出 (对齐教师日志格式)
+                double blh[3];
+                XYZToBLH(Res.Position, blh, R_WGS84, F_WGS84);
+                
+                fout << "SPP: " << (int)Res.Time.Week << " " << std::fixed << std::setprecision(3) << Res.Time.SecOfWeek
+                     << " X:" << std::setprecision(4) << Res.Position[0]
+                     << " Y:" << std::setprecision(4) << Res.Position[1]
+                     << " Z:" << std::setprecision(4) << Res.Position[2]
+                     << " B:" << std::setw(12) << std::setprecision(8) << blh[0] * 180.0 / 3.1415926535898
+                     << " L:" << std::setw(12) << std::setprecision(8) << blh[1] * 180.0 / 3.1415926535898
+                     << " H:" << std::setw(8) << std::setprecision(3) << blh[2]
+                     << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * 299792458.0
+                     << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * 299792458.0
+                     << " PDOP:" << std::setw(8) << std::setprecision(3) << Res.PDOP
+                     << " Sigma:" << std::setw(8) << std::setprecision(3) << Res.SigmaPos
+                     << " GPSSats:" << std::setw(3) << (int)Res.GPSSatNum
+                     << " BDSSats:" << std::setw(3) << (int)Res.BDSSatNum
+                     << " Sats:" << std::setw(3) << (int)Res.AllSatNum << std::endl;
+
+                if (success_epochs % 20 == 0 || success_epochs < 5) {
+                    printf("Epoch %d (TOW %.1f): Success. Sats: %d | PDOP: %.2f | H: %.1f\n", 
+                           total_epochs, Res.Time.SecOfWeek, Res.AllSatNum, Res.PDOP, blh[2]);
+                }
+                // 热启动：将解算的坐标作为下一历元的初值
+                Obs.Pos[0] = Res.Position[0];
+                Obs.Pos[1] = Res.Position[1];
+                Obs.Pos[2] = Res.Position[2];
+            } else {
+                if (total_epochs % 100 == 0) {
+                    printf("Epoch %d (TOW %.1f): SPP Failed. Detected Sats: %d\n", total_epochs, Obs.Time.SecOfWeek, detected_sats);
+                }
+            }
+        }
+        
+        if (Len == initial_len && !feof(fp) && initial_len > 0) {
+            memmove(Buff, Buff + 1, --Len);
+        }
+
+    } while (!feof(fp) || Len > 0);
+
+    fclose(fp);
+    fout.close();
+    printf("\nProcessing Summary:\n");
+    printf("Total Epochs Decoded: %d\n", total_epochs);
+    printf("Total Success SPP:   %d\n", success_epochs);
+    printf("Results saved to result.txt\n");
     return 1;
 }
-

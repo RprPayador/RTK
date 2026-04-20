@@ -126,13 +126,13 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 
 		if (SystemID == 0) { // GPS 系统
 			sys = GPS;
-			if (SignalTypeID == 0) s = 0; // L1 C/A
-			else if (SignalTypeID == 9) s = 1; // L2 P(Y)
+			if (SignalTypeID == 0 || SignalTypeID == 16) s = 0; // L1 C/A or L1C
+			else if (SignalTypeID == 9 || SignalTypeID == 5 || SignalTypeID == 17 || SignalTypeID == 18) s = 1; // L2 P(Y) or L2C
 		}
 		else if (SystemID == 4) { // BDS 北斗系统
 			sys = BDS;
-			if (SignalTypeID == 0 || SignalTypeID == 4)s = 0; // B1I (D1=0, D2=4)
-			else if (SignalTypeID == 2 || SignalTypeID == 6)s = 1; // B3I (D1=2, D2=6)
+			if (SignalTypeID == 0 || SignalTypeID == 4) s = 0; // B1I (D1/D2)
+			else if (SignalTypeID == 2 || SignalTypeID == 6) s = 1; // B3I (D1/D2)
 		}
 
 		// 如果不是我们关注的系统或频点，跳过
