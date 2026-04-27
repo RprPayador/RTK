@@ -2,8 +2,7 @@
 #include <cmath>
 
 double Hopfield(double H,double Elev){
-    // 增加稳健性判断：若高度异常（如迭代初期在地心），返回0以防止 exp 溢出
-    if (H < -1000.0 || H > 50000.0) return 0.0;
+    if (H < -1000.0 || H > 50000.0) return 0.0;//不在对流层范围内
 
     double RH=RH0*(exp(-0.0006396*(H-HIGHT0)));
     double p=PRESSURE0*pow((1-0.0000226*(H-HIGHT0)),5.225);
@@ -22,11 +21,12 @@ void DetectOutlier(EPOCHOBS* Obs){
     int validcount=0;
     MWGF CurComObs[MAXCHANNUM];
     
-    // 1. 备份并清除状态，准备记录当前历元有效信息
+    //备份并清除状态，准备记录当前历元有效信息
     MWGF PreComObs[MAXCHANNUM];
     memcpy(PreComObs, Obs->ComObs, MAXCHANNUM * sizeof(MWGF));
     memset(Obs->ComObs, 0, MAXCHANNUM * sizeof(MWGF));
 
+    //对当前历元每个卫星观测数据循环
     for(int i=0; i<Obs->SatNum; i++){
         SATOBS& sat = Obs->SatObs[i];
         
@@ -39,7 +39,7 @@ void DetectOutlier(EPOCHOBS* Obs){
             continue;
         }
 
-        // 2. 计算当前组合值
+        // 计算当前组合值
         double GF = sat.l1 - sat.l2;
         double MW, PIF;
         if(sat.System == GPS){
@@ -47,12 +47,11 @@ void DetectOutlier(EPOCHOBS* Obs){
             PIF = (FG1_GPS*FG1_GPS*sat.c1 - FG2_GPS*FG2_GPS*sat.p2)/(FG1_GPS*FG1_GPS - FG2_GPS*FG2_GPS);
         }
         else {
-            // BDS B1/B3 组合 (注意：之前代码误用了 FG2_BDS)
             MW = (FG1_BDS*sat.l1 - FG3_BDS*sat.l2)/(FG1_BDS - FG3_BDS) - (FG1_BDS*sat.c1 + FG3_BDS*sat.p2)/(FG1_BDS + FG3_BDS);
             PIF = (FG1_BDS*FG1_BDS*sat.c1 - FG3_BDS*FG3_BDS*sat.p2)/(FG1_BDS*FG1_BDS - FG3_BDS*FG3_BDS);
         }
 
-        // 3. 搜索上一历元匹配项
+        // 搜索上一历元匹配项
         int preIdx = -1;
         for(int j=0; j<MAXCHANNUM; j++){
             if(PreComObs[j].Prn == sat.Prn && PreComObs[j].Sys == sat.System){
@@ -61,7 +60,7 @@ void DetectOutlier(EPOCHOBS* Obs){
             }
         }
 
-        // 4. 周跳检测与状态平滑
+        // 周跳检测与状态平滑
         if(preIdx != -1 && PreComObs[preIdx].n > 0){
             double dGF = fabs(GF - PreComObs[preIdx].GF);
             double dMW = fabs(MW - PreComObs[preIdx].MW);
@@ -90,6 +89,6 @@ void DetectOutlier(EPOCHOBS* Obs){
         CurComObs[i].PIF = PIF;
     }
 
-    // 5. 将当前计算结果更新回持久化缓冲区
+    // 更新观测结构体中的组合观测值
     memcpy(Obs->ComObs, CurComObs, MAXCHANNUM * sizeof(MWGF));
 }

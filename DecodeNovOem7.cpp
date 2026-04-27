@@ -162,7 +162,7 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 			if (s == 0) {
 				obs->SatObs[idx].c1 = psr;
 				obs->SatObs[idx].l1 = adr;
-				obs->SatObs[idx].d1 = dopp;
+				obs->SatObs[idx].d1 = -dopp;
 				obs->SatObs[idx].cn0[0] = CNo;
 				obs->SatObs[idx].LockTime[0] = locktime;
 				obs->SatObs[idx].half[0] = (unsigned char)half;
@@ -170,7 +170,7 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 			else if (s == 1) {
 				obs->SatObs[idx].p2 = psr;
 				obs->SatObs[idx].l2 = adr;
-				obs->SatObs[idx].d2 = dopp;
+				obs->SatObs[idx].d2 = -dopp;
 				obs->SatObs[idx].cn0[1] = CNo;
 				obs->SatObs[idx].LockTime[1] = locktime;
 				obs->SatObs[idx].half[1] = (unsigned char)half;

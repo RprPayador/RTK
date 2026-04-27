@@ -1,10 +1,6 @@
 #include "RTK_Structs.h"
 #include <cmath>
 
-// 移除未使用的 Eigen 引用
-
-const double PI_CONST = 3.14159265358979323846;
-
 // 空间直角坐标转大地坐标
 void XYZToBLH(const double XYZ[3], double BLH[3], const double R, const double F)
 {
@@ -60,18 +56,14 @@ void BLHToNEUMat(const double BLH[], double Mat[])
     double sinL = sin(L);
     double cosL = cos(L);
     
-    // Mat 按照 3x3 矩阵存储，采用行为 N, E, U 顺序
-    // 北向方向 (N)
-    Mat[0] = -sinB * cosL;
-    Mat[1] = -sinB * sinL;
-    Mat[2] = cosB;
+    Mat[0] = -sinL;
+    Mat[1] = cosL;
+    Mat[2] = 0.0;
     
-    // 东向方向 (E)
-    Mat[3] = -sinL;
-    Mat[4] = cosL;
-    Mat[5] = 0.0;
+    Mat[3] = -sinB * cosL;
+    Mat[4] = -sinB * sinL;
+    Mat[5] = cosB;
     
-    // 天向方向 (U)
     Mat[6] = cosB * cosL;
     Mat[7] = cosB * sinL;
     Mat[8] = sinB;
@@ -85,23 +77,23 @@ void CompSatElAz(const double Xr[], const double Xs[], double *Elev, double *Azi
     double dz = Xs[2] - Xr[2];
     
     double blh[3];
-    // 默认使用 WGS84 的长半轴和扁率进行转换
-    XYZToBLH(Xr, blh, 6378137.0, 1.0 / 298.257223563);
+
+    XYZToBLH(Xr, blh, R_WGS84, F_WGS84);
     
     double mat[9];
     BLHToNEUMat(blh, mat);
     
-    // 计算站心坐标 (N, E, U)
-    double n = mat[0] * dx + mat[1] * dy + mat[2] * dz;
-    double e = mat[3] * dx + mat[4] * dy + mat[5] * dz;
-    double u = mat[6] * dx + mat[7] * dy + mat[8] * dz;
+
+    double de = mat[0] * dx + mat[1] * dy + mat[2] * dz;
+    double dn = mat[3] * dx + mat[4] * dy + mat[5] * dz;
+    double dh = mat[6] * dx + mat[7] * dy + mat[8] * dz;
     
     if (Elev) {
-        *Elev = atan2(u, sqrt(e * e + n * n));
+        *Elev = atan2(dh, sqrt(dn * dn + de * de));
     }
     if (Azim) {
-        double az = atan2(e, n); // 从正北开始，顺时针方向计算方位角
-        if (az < 0.0) az += 2.0 * PI_CONST;
+        double az = atan2(de, dn); 
+        if (az < 0.0) az += 2.0 * PAI;
         *Azim = az;
     }
 }
@@ -114,8 +106,8 @@ void Comp_dEnu(const double X0[], const double Xr[], double dNeu[])
     double dz = Xr[2] - X0[2];
     
     double blh[3];
-    // 默认使用 WGS84 常量
-    XYZToBLH(X0, blh, 6378137.0, 1.0 / 298.257223563);
+
+    XYZToBLH(X0, blh, R_WGS84, F_WGS84);
     
     double mat[9];
     BLHToNEUMat(blh, mat);

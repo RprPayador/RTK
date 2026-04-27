@@ -74,7 +74,7 @@ void ComputeGPSSatOrbitAtSignalTrans(const EPOCHOBS* Epk, GPSEPHREC* GpsEph, GPS
 }
 
 
-// 单点定位解算主函数 (严格对齐 RTK_Structs.h 第 397 行定义)
+// 单点定位解算主函数
 bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
     
     // 1. 设置初略位置与钟差
@@ -119,7 +119,7 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
         int total_sats = valid_sats.size();
         int state_size = 3 + (gps_count > 0 ? 1 : 0) + (bds_count > 0 ? 1 : 0);//判断最小二乘矩阵列数是4还是5
         
-        if (total_sats < state_size) return false;//说明卫星数小于4
+        if (total_sats < state_size) return false;//说明卫星数不足
         
         // C. 建立线性化方程
         int idx_G = (gps_count > 0) ? 3 : -1;
@@ -138,7 +138,7 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
             double dy = pvt.SatPos[1] - X_R[1];
             double dz = pvt.SatPos[2] - X_R[2];
             double r = sqrt(dx*dx + dy*dy + dz*dz);
-            if (r < 1e-3) r = 1e-3;
+            if (r < 1e-6) r = 1e-6;
             
             B(k, 0) = -dx / r;
             B(k, 1) = -dy / r;
@@ -159,7 +159,7 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
             double Tgd_corr = 0.0;
             if (obs.System == BDS) {
                 // BDS B1/B3 IF TGD: (f1^2 / (f1^2 - f3^2)) * TGD1
-                double f1 = 1561.098e6, f3 = 1268.52e6;
+                double f1 = FG1_BDS, f3 = FG3_BDS;
                 Tgd_corr = (f1*f1) / (f1*f1 - f3*f3) * pvt.Tgd1 * C_Light;
             }
             double current_dt_r = (obs.System == GPS) ? dt_G : dt_C;
@@ -168,7 +168,7 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
         
         // D. 最小二乘求解 (等权)
         MatrixXd BTB = B.transpose() * B;
-        VectorXd dx_hat = BTB.ldlt().solve(B.transpose() * w);
+        VectorXd dx_hat = BTB.inverse()*B.transpose()*w;
         
         X_R[0] += dx_hat(0);
         X_R[1] += dx_hat(1);
@@ -177,8 +177,8 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
         if (idx_G != -1) dt_G += dx_hat(idx_G);
         if (idx_C != -1) dt_C += dx_hat(idx_C);
         
-        // E. 收敛检查与精度评定
-        if (dx_hat.head<3>().norm() < 0.001) {
+        // E. 收敛检查与精度评定 (检查包含钟差在内的全状态向量)
+        if (dx_hat.norm() < 0.0001) {
             MatrixXd Q = BTB.inverse();
             PDOP = sqrt(Q(0, 0) + Q(1, 1) + Q(2, 2));
             
@@ -214,4 +214,61 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result) {
     
     Result->IsSuccess = false;
     return false;
+}
+
+
+void SPV(EPOCHOBS* Epoch, PPRESULT* Result ){
+    if (Result->AllSatNum < 4) return;
+    int state_size = 4;
+    std::vector<int> sat_valid;//多普勒观测值可用卫星下标列表
+    std::vector<double> dopp;//多普勒观测值列表(转换为m/s)
+    for(int i = 0; i < Epoch->SatNum; i++){
+        SATOBS obs = Epoch->SatObs[i];
+        if(obs.d1 > 0) {
+            sat_valid.push_back(i);
+            double lambda = (obs.System == GPS) ? WL1_GPS : WL1_BDS;
+            dopp.push_back(obs.d1 * lambda);
+        }
+        else if(obs.d2 > 0) {
+            sat_valid.push_back(i);
+            double lambda = (obs.System == GPS) ? WL2_GPS : WL3_BDS;
+            dopp.push_back(obs.d2 * lambda);
+        }
+        else continue;
+    }
+    
+    Vector3d X_R = Vector3d(Result->Position);//用户坐标
+
+    MatrixXd B(sat_valid.size(),state_size);
+    VectorXd w(sat_valid.size());
+
+    for(int j = 0; j < sat_valid.size(); j++){
+        int index = sat_valid[j];
+        SATMIDRES pvt = Epoch->SatPVT[index];
+
+        double dx = pvt.SatPos[0] - X_R[0];
+        double dy = pvt.SatPos[1] - X_R[1];
+        double dz = pvt.SatPos[2] - X_R[2];
+
+        double rho = sqrt(dx*dx + dy*dy + dz*dz);
+        double rho_dot_sat = (dx*pvt.SatVel[0] + dy*pvt.SatVel[1] + dz*pvt.SatVel[2]) / rho;
+        w(j) = dopp[j] - rho_dot_sat + C_Light*pvt.SatClkSft;
+
+        B(j,0) = -dx / rho;  
+        B(j,1) = -dy / rho;  
+        B(j,2) = -dz / rho;  
+        B(j,3) =  1.0;       
+    }
+
+    VectorXd X_hat = (B.transpose()*B).ldlt().solve(B.transpose()*w);
+    VectorXd v = B*X_hat - w;
+
+    double sigma0_hat = sqrt(double(v.transpose()*v) / (sat_valid.size() - 4));
+    MatrixXd D = sigma0_hat*(B.transpose()*B).inverse();
+
+    // 输出速度解
+    Result->Velocity[0] = X_hat(0);
+    Result->Velocity[1] = X_hat(1);
+    Result->Velocity[2] = X_hat(2);
+    // 钟漂: X_hat(3) / C_Light (单位 s/s)
 }

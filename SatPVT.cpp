@@ -17,15 +17,14 @@ bool CompSatClkOff(const int Prn, const GNSSSys Sys, const GPSTIME* t, GPSEPHREC
 
     if (eph == NULL || eph->PRN == 0) return false;
 
-    // 根据系统调整时间，用于计算相对于 TOC/TOE 的 dt
     GPSTIME t_sys = *t;
-    if (Sys == BDS) {
+    if (Sys == BDS) { //如果是BDS，从GPST转换到BDST，再计算到TOC的间隔时间
         t_sys.SecOfWeek -= 14.0;
         t_sys.Week -= 1356;
         if (t_sys.SecOfWeek < 0) { t_sys.SecOfWeek += 604800.0; t_sys.Week--; }
     }
 
-    double dt = GetDiffTime(&t_sys, &eph->TOC);
+    double dt = GetDiffTime(&t_sys, &eph->TOC);//确保相同时间系统间求差
 
     Mid->SatClkOft = eph->ClkBias + eph->ClkDrift * dt + eph->ClkDriftRate * dt * dt;//钟差
     Mid->SatClkSft = eph->ClkDrift + 2 * eph->ClkDriftRate * dt;//钟速
@@ -110,10 +109,12 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
         t_bds.SecOfWeek += 604800.0;
         t_bds.Week -= 1;
     }
-    // 关键修正：确保 tk 是相对于 TOE 的合理数值（应为正负几小时内）
+    // 确保 tk 是相对于 TOE 的合理数值（应为正负几小时内）
     double tk = GetDiffTime(&t_bds, &eph->TOE);
+    /*
     if (tk > 302400.0) tk -= 604800.0;
     else if (tk < -302400.0) tk += 604800.0;
+    */
 
 
     double n0 = sqrt(GM_BDS) / pow(eph->SqrtA, 3);//卫星平均角速度

@@ -44,7 +44,7 @@ int main()
             // 如果 SPP 还没成功过，用 PSRPOS 作为初值
             PPRESULT psr_res;
             decode_psrpos(Buff, &psr_res);
-            if (Obs.Pos[0] == 0) {
+            if (Obs.Pos[0] == 0 && Obs.Pos[1] == 0 && Obs.Pos[2] == 0) {
                 Obs.Pos[0] = psr_res.Position[0];
                 Obs.Pos[1] = psr_res.Position[1];
                 Obs.Pos[2] = psr_res.Position[2];
@@ -53,23 +53,26 @@ int main()
 
         if (val == 1) { 
             total_epochs++;
-            // 2. 粗差探测
+            // 粗差探测
             DetectOutlier(&Obs);
 
             // 统计通过探测的卫星
             int detected_sats = 0;
             for(int i=0; i<Obs.SatNum; i++) if(Obs.SatObs[i].Valid) detected_sats++;
 
-            // 3. 单点定位解算
+            // 单点定位解算
             PPRESULT Res;
             RAWDAT Raw;
             for (int i = 0; i < MAXGPSNUM; i++) Raw.GpsEph[i] = GpsEph[i];
             for (int i = 0; i < MAXBDSNUM; i++) Raw.BdsEph[i] = BdsEph[i];
 
-             if (SPP(&Obs, &Raw, &Res)) {
+            if (SPP(&Obs, &Raw, &Res)) {
+                // 执行单点测速
+                SPV(&Obs, &Res);
+
                 success_epochs++;
                 
-                // 4. 详细卫星信息输出 (对齐教师日志格式)
+                // 详细卫星信息输出
                 fout << std::fixed << std::uppercase;
                 for (int i = 0; i < Obs.SatNum; i++) {
                     if (!Obs.SatPVT[i].Valid) continue;
@@ -90,7 +93,7 @@ int main()
                          << " E=" << std::setw(7) << std::setprecision(3) << pvt.Elevation * 180.0 / 3.1415926535898 << "deg" << std::endl;
                 }
 
-                // 5. SPP 汇总输出 (对齐教师日志格式)
+                // SPP 汇总输出
                 double blh[3];
                 XYZToBLH(Res.Position, blh, R_WGS84, F_WGS84);
                 
@@ -101,6 +104,9 @@ int main()
                      << " B:" << std::setw(12) << std::setprecision(8) << blh[0] * 180.0 / 3.1415926535898
                      << " L:" << std::setw(12) << std::setprecision(8) << blh[1] * 180.0 / 3.1415926535898
                      << " H:" << std::setw(8) << std::setprecision(3) << blh[2]
+                     << " Vx:" << std::setw(9) << std::setprecision(4) << Res.Velocity[0]
+                     << " Vy:" << std::setw(9) << std::setprecision(4) << Res.Velocity[1]
+                     << " Vz:" << std::setw(9) << std::setprecision(4) << Res.Velocity[2]
                      << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * 299792458.0
                      << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * 299792458.0
                      << " PDOP:" << std::setw(8) << std::setprecision(3) << Res.PDOP
@@ -110,17 +116,16 @@ int main()
                      << " Sats:" << std::setw(3) << (int)Res.AllSatNum << std::endl;
 
                 if (success_epochs % 20 == 0 || success_epochs < 5) {
-                    printf("Epoch %d (TOW %.1f): Success. Sats: %d | PDOP: %.2f | H: %.1f\n", 
-                           total_epochs, Res.Time.SecOfWeek, Res.AllSatNum, Res.PDOP, blh[2]);
+                    printf("Epoch %d (TOW %.1f): Success. Sats: %d | PDOP: %.2f | H: %.1f | V: [%.3f, %.3f, %.3f]\n", 
+                           total_epochs, Res.Time.SecOfWeek, Res.AllSatNum, Res.PDOP, blh[2], Res.Velocity[0], Res.Velocity[1], Res.Velocity[2]);
                 }
                 // 热启动：将解算的坐标作为下一历元的初值
                 Obs.Pos[0] = Res.Position[0];
                 Obs.Pos[1] = Res.Position[1];
                 Obs.Pos[2] = Res.Position[2];
-            } else {
-                if (total_epochs % 100 == 0) {
+            } 
+            else {
                     printf("Epoch %d (TOW %.1f): SPP Failed. Detected Sats: %d\n", total_epochs, Obs.Time.SecOfWeek, detected_sats);
-                }
             }
         }
         
