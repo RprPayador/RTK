@@ -3,6 +3,7 @@
 #include <fstream>
 #include <cstring>
 #include "RTK_Structs.h"
+#include "sockets.cpp"
 
 int main()
 {
@@ -10,6 +11,14 @@ int main()
     std::ofstream fout("D:\\GNSS Algorithm\\RTK_Raw\\result.txt");
     unsigned char Buff[MAXRAWLEN];
     int Len = 0, LenRead, val;
+    SOCKET NetGps;
+
+    if(FILEMODE == 0){
+        if(OpenSocket(NetGps, "47.114.134.129", 7190)==false){
+            printf( "This ip& port was not opened.\n");
+            return 0;
+        }
+    }
     
     EPOCHOBS Obs; 
     memset(&Obs, 0, sizeof(Obs));
@@ -33,9 +42,17 @@ int main()
     int success_epochs = 0;
 
     do {
-        LenRead = fread(Buff + Len, sizeof(unsigned char), MAXRAWLEN - Len, fp);
-        if (LenRead <= 0 && Len <= 0) break;
-        Len = Len + LenRead;
+        if(FILEMODE == 1){
+            LenRead = fread(Buff + Len, sizeof(unsigned char), MAXRAWLEN - Len, fp);
+            if (LenRead <= 0 && Len <= 0) break;
+            Len = Len + LenRead;
+        }
+        if(FILEMODE == 0){
+            LenRead=recv(NetGps, (char*)Buff, MAXRAWLEN, 0);
+            if (LenRead <= 0 && Len <= 0) break;
+            Len = Len + LenRead;
+        }
+
 
         int initial_len = Len;
         val = DecodeNovOem7Dat(Buff, Len, &Obs, GpsEph, BdsEph);
@@ -107,8 +124,8 @@ int main()
                      << " Vx:" << std::setw(9) << std::setprecision(4) << Res.Velocity[0]
                      << " Vy:" << std::setw(9) << std::setprecision(4) << Res.Velocity[1]
                      << " Vz:" << std::setw(9) << std::setprecision(4) << Res.Velocity[2]
-                     << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * C_LIGHT
-                     << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * C_LIGHT
+                     << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * C_Light
+                     << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * C_Light
                      << " PDOP:" << std::setw(8) << std::setprecision(3) << Res.PDOP
                      << " Sigma:" << std::setw(8) << std::setprecision(3) << Res.SigmaPos
                      << " GPSSats:" << std::setw(3) << (int)Res.GPSSatNum

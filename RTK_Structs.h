@@ -59,7 +59,7 @@
 #define HIGHT0 0.0
 #define RH0 0.5
 
-#define FILEMODE 1
+#define FILEMODE 0
 
 
 
