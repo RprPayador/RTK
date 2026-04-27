@@ -1,5 +1,7 @@
 # GNSS 单点定位与测速 (SPP/SPV)
 
+[English](./README.md) | **中文**
+
 [![Language](https://img.shields.io/badge/language-C%2B%2B-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -203,5 +205,5 @@ MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
 
 **作者**：RprPayador  
 **单位**：  
-**邮箱**: 17707234049lijy@gmail.com  
+**邮箱**：17707234049lijy@gmail.com  
 **版本**：1.0

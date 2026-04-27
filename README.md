@@ -1,5 +1,7 @@
 # GNSS Single Point Positioning (SPP)
 
+**English** | [中文](./README_CN.md)
+
 [![Language](https://img.shields.io/badge/language-C%2B%2B-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -201,7 +203,7 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**Author**: RprPayador
-**Institution**:
+**Author**: RprPayador  
+**Institution**:  
 **Email**: 17707234049lijy@gmail.com  
 **Version**: 1.0
