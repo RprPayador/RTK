@@ -90,7 +90,7 @@ int main()
                          << " Clkd=" << std::scientific << std::setw(15) << std::setprecision(5) << pvt.SatClkSft
                          << std::fixed << " PIF=" << std::setw(14) << std::setprecision(4) << Obs.ComObs[i].PIF
                          << " Trop=" << std::setw(8) << std::setprecision(3) << pvt.TropCorr
-                         << " E=" << std::setw(7) << std::setprecision(3) << pvt.Elevation * 180.0 / 3.1415926535898 << "deg" << std::endl;
+                         << " E=" << std::setw(7) << std::setprecision(3) << pvt.Elevation * Deg << "deg" << std::endl;
                 }
 
                 // SPP 汇总输出
@@ -101,14 +101,14 @@ int main()
                      << " X:" << std::setprecision(4) << Res.Position[0]
                      << " Y:" << std::setprecision(4) << Res.Position[1]
                      << " Z:" << std::setprecision(4) << Res.Position[2]
-                     << " B:" << std::setw(12) << std::setprecision(8) << blh[0] * 180.0 / 3.1415926535898
-                     << " L:" << std::setw(12) << std::setprecision(8) << blh[1] * 180.0 / 3.1415926535898
+                     << " B:" << std::setw(12) << std::setprecision(8) << blh[0] * Deg
+                     << " L:" << std::setw(12) << std::setprecision(8) << blh[1] * Deg
                      << " H:" << std::setw(8) << std::setprecision(3) << blh[2]
                      << " Vx:" << std::setw(9) << std::setprecision(4) << Res.Velocity[0]
                      << " Vy:" << std::setw(9) << std::setprecision(4) << Res.Velocity[1]
                      << " Vz:" << std::setw(9) << std::setprecision(4) << Res.Velocity[2]
-                     << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * 299792458.0
-                     << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * 299792458.0
+                     << " GPS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[0] * C_LIGHT
+                     << " BDS Clk:" << std::setw(12) << std::setprecision(3) << Res.RcvClkOft[1] * C_LIGHT
                      << " PDOP:" << std::setw(8) << std::setprecision(3) << Res.PDOP
                      << " Sigma:" << std::setw(8) << std::setprecision(3) << Res.SigmaPos
                      << " GPSSats:" << std::setw(3) << (int)Res.GPSSatNum
