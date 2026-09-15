@@ -52,10 +52,11 @@ int DecodeNovOem7Dat(unsigned char Buff[], int& Len, EPOCHOBS* obs, GPSEPHREC ge
 			case 43:   // RANGEB: 原始观测值
 				ret = decode_rangeb_oem7(Buff + i, obs); 
 				break;
+			case 42:   // BESTPOS: 最佳定位解
 			case 47:   // PSRPOS: 伪距定位解
 				PPRESULT pos;
 				ret = decode_psrpos(Buff + i, &pos); 
-				if (ret == 2) {
+				if (ret == 2 && pos.IsSuccess) {
 					obs->Pos[0] = pos.Position[0];
 					obs->Pos[1] = pos.Position[1];
 					obs->Pos[2] = pos.Position[2];
@@ -112,14 +113,16 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 		double adr = *(double*)(body + 16 + i);
 		float adr_sigma = *(float*)(body + 24 + i);
 		float dopp = *(float*)(body + 28 + i);
-		float CNo = *(float*)(body + 32 + i);
+		float CN0 = *(float*)(body + 32 + i);
 		float locktime = *(float*)(body + 36 + i);
 		unsigned long status = *(unsigned long*)(body + 40 + i);
 
+		bool phase_lock = (status >> 10) & 0x01;
+		bool parity_known = (status >> 11) & 0x01;
+		bool code_lock = (status >> 12) & 0x01;
 		int SystemID = (status >> 16) & 0x07;
 		int SignalTypeID = (status >> 21) & 0x1F;
-		int half = status & 0x01;
-
+		int half = (status >> 28) & 0x01;
 
 		GNSSSys sys = UNKS;
 		int s = -1;
@@ -141,6 +144,18 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 			continue;
 		}
 
+		// 载波波长与单位转换 (cycles -> m)
+		double wl = 0.0;
+		if (sys == GPS) {
+			wl = (s == 0) ? WL1_GPS : WL2_GPS;
+		}
+		else if (sys == BDS) {
+			wl = (s == 0) ? WL1_BDS : WL3_BDS;
+		}
+
+		double psr_m = code_lock ? psr : 0.0;
+		double carrier_m = (phase_lock && parity_known) ? (-adr * wl) : 0.0;
+
 		// 3. 查找或加入卫星列表
 		int idx = -1;
 		for (int k = 0; k < satNum; k++) {
@@ -160,18 +175,18 @@ int decode_rangeb_oem7(unsigned char* buff, EPOCHOBS* obs) {
 		// 4. 填充观测值数据
 		if (idx != -1) {
 			if (s == 0) {
-				obs->SatObs[idx].c1 = psr;
-				obs->SatObs[idx].l1 = adr;
+				obs->SatObs[idx].c1 = psr_m;
+				obs->SatObs[idx].l1 = carrier_m;
 				obs->SatObs[idx].d1 = -dopp;
-				obs->SatObs[idx].cn0[0] = CNo;
+				obs->SatObs[idx].cn0[0] = CN0;
 				obs->SatObs[idx].LockTime[0] = locktime;
 				obs->SatObs[idx].half[0] = (unsigned char)half;
 			}
 			else if (s == 1) {
-				obs->SatObs[idx].p2 = psr;
-				obs->SatObs[idx].l2 = adr;
+				obs->SatObs[idx].p2 = psr_m;
+				obs->SatObs[idx].l2 = carrier_m;
 				obs->SatObs[idx].d2 = -dopp;
-				obs->SatObs[idx].cn0[1] = CNo;
+				obs->SatObs[idx].cn0[1] = CN0;
 				obs->SatObs[idx].LockTime[1] = locktime;
 				obs->SatObs[idx].half[1] = (unsigned char)half;
 			}

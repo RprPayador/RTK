@@ -67,35 +67,48 @@ g++ -fdiagnostics-color=always -g \
 
 ## 使用说明
 
-### 配置模式
+## 使用说明
 
-在 `RTK_Structs.h` 中设置运行模式：
+### 配置文件设置 (`config.ini`)
 
-```cpp
-#define FILEMODE 1   // 1 = 文件模式（离线处理），0 = 实时 TCP 网络模式
-```
+程序默认通过 `config.ini` 文件统一管理运行模式、数据路径与算法参数，采用标准 INI 分节（`[Section]`）与键值对语法，支持行注释（`#` 或 `;`）：
 
-### 文件模式
+```ini
+[Mode]
+# 运行数据模式: 1 = 本地离线文件模式, 0 = 实时网络/串口模式
+IsFileData = 1
+# 解算策略模式: 1 = 扩展卡尔曼滤波 (EKF), 2 = 最小二乘平差 (LSQ)
+RTKProcMode = 2
 
-将 NovAtel OEM7 二进制数据文件放置于：
-```
-D:\GNSS Algorithm\RTK\RTK\oem719-202603111200.bin
-```
+[Network]
+# 实时数据网络连接配置 (实时网络模式使用)
+RovNetIP = 47.114.134.129
+RovNetPort = 7190
 
-### 实时网络模式
+[Files]
+# 观测数据文件名 (离线文件模式使用，支持相对路径或绝对路径)
+RovObsDatFile = ./data/oem719-202603111200.bin
+# 解算结果输出路径
+ResFile = ./result.txt
 
-在 `RTK.cpp` 中配置 TCP 服务器地址：
-```cpp
-if(OpenSocket(NetGps, "47.114.134.129", 7190) == false)
+[Quality]
+# 质量控制与截止高度角 (deg)
+ElevThreshold = 10.0
+# 模糊度 Ratio 检验阈值
+RatioThres = 3.0
 ```
 
 ### 运行程序
 
 ```bash
+# 默认自动加载 ./config.ini (若不存在会自动尝试 ./config.txt)
 ./RTK.exe
+
+# 或指定自定义配置文件
+./RTK.exe my_config.ini
 ```
 
-解算结果将输出至 `result.txt`。
+解算结果将输出至配置指定的 `result.txt`。
 
 ## 输出格式
 

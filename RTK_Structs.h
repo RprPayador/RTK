@@ -324,6 +324,7 @@ struct RTKEKF
 
 struct ROVERCFGINFO   // 配置信息
 {
+	short  IsRTKMode;					 // 1=RTK, 0=SPP
 	short  IsFileData, RTKProcMode;      // 1=FILE, 0=COM, 1=EKF, 2=LSQ
 	int    RovPort, RovBaud;             // COM端口设置
 	char   BasNetIP[20], RovNetIP[20];   // ip address
@@ -338,6 +339,7 @@ struct ROVERCFGINFO   // 配置信息
     
     ROVERCFGINFO()
     {
+		IsRTKMode = 0;
 		IsFileData = RTKProcMode = 1;
 		RovPort = RovBaud = BasNetPort = RovNetPort = 0;
 		CodeNoise = CPNoise = ElevThreshold = 0.0;
@@ -399,7 +401,7 @@ bool SPP(EPOCHOBS* Epoch, RAWDAT* Raw, PPRESULT* Result);
 void SPV(EPOCHOBS* Epoch, PPRESULT* Result );
 
 // RTK
-int GetSynObs(FILE* FBas, FILE* FRov, SOCKET& BasSock, SOCKET& RovSock, RAWDAT* Raw);
+int GetSynObs(FILE* FBas, FILE* FRov, SOCKET& BasSock, SOCKET& RovSock, RAWDAT* Raw, int IsFileData, double SynThres);
 void FormSDEpochObs(const EPOCHOBS *EpkA, const EPOCHOBS *EpkB, SDEPOCHOBS *SDObs);
 void DetectCycleSlip(SDEPOCHOBS* Obs);
 void DetRefSat(const EPOCHOBS* EpkA, const EPOCHOBS* EpkB, SDEPOCHOBS* SDObs, DDCOBS* DDObs);

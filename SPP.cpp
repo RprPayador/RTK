@@ -224,12 +224,14 @@ void SPV(EPOCHOBS* Epoch, PPRESULT* Result ){
     std::vector<double> dopp;//多普勒观测值列表(转换为m/s)
     for(int i = 0; i < Epoch->SatNum; i++){
         SATOBS obs = Epoch->SatObs[i];
-        if(obs.d1 > 0) {
+        if(!Epoch->SatPVT[i].Valid) continue; // 必须有星历且计算成功才能参与测速
+        
+        if(obs.d1 != 0.0) {
             sat_valid.push_back(i);
             double lambda = (obs.System == GPS) ? WL1_GPS : WL1_BDS;
             dopp.push_back(obs.d1 * lambda);
         }
-        else if(obs.d2 > 0) {
+        else if(obs.d2 != 0.0) {
             sat_valid.push_back(i);
             double lambda = (obs.System == GPS) ? WL2_GPS : WL3_BDS;
             dopp.push_back(obs.d2 * lambda);
