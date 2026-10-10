@@ -16,6 +16,7 @@ bool CompSatClkOff(const int Prn, const GNSSSys Sys, const GPSTIME* t, GPSEPHREC
     }
 
     if (eph == NULL || eph->PRN == 0) return false;
+    if (eph->SVHealth != 0) return false; // 卫星健康度检查: 非健康卫星拒绝计算钟差
 
     GPSTIME t_sys = *t;
     if (Sys == BDS) { //如果是BDS，从GPST转换到BDST，再计算到TOC的间隔时间
@@ -42,8 +43,12 @@ bool CompSatClkOff(const int Prn, const GNSSSys Sys, const GPSTIME* t, GPSEPHREC
 
 bool CompGPSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMIDRES* Mid) {
     if (eph == NULL || eph->PRN == 0) return false;
+    if (eph->SVHealth != 0) return false; // 卫星健康状态检查: 不健康直接剔除
 
     double tk = GetDiffTime(t, &eph->TOE);
+    if (tk > 302400.0) tk -= 604800.0;
+    else if (tk < -302400.0) tk += 604800.0;
+    if (fabs(tk) > 14400.0) return false; // 星历有效龄期保护 (4小时)
 
     double n0 = sqrt(GM_Earth) / pow(eph->SqrtA, 3);//computed mean motion
     double n = n0 + eph->DeltaN;//corrected mean motion
@@ -100,6 +105,7 @@ bool CompGPSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
 
 bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMIDRES* Mid) {
     if (eph == NULL || eph->PRN == 0) return false;
+    if (eph->SVHealth != 0) return false; // 卫星健康状态检查: 不健康直接剔除
 
     /*GPST转换到BDST*/
     GPSTIME t_bds = *t;
@@ -111,10 +117,9 @@ bool CompBDSSatPVT(const int Prn, const GPSTIME* t, const GPSEPHREC* eph, SATMID
     }
     // 确保 tk 是相对于 TOE 的合理数值（应为正负几小时内）
     double tk = GetDiffTime(&t_bds, &eph->TOE);
-    /*
     if (tk > 302400.0) tk -= 604800.0;
     else if (tk < -302400.0) tk += 604800.0;
-    */
+    if (fabs(tk) > 14400.0) return false; // 星历有效龄期保护 (4小时)
 
 
     double n0 = sqrt(GM_BDS) / pow(eph->SqrtA, 3);//卫星平均角速度

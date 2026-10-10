@@ -2,10 +2,13 @@
 #include <cmath>
 
 double Hopfield(double H,double Elev){
-    if (H < -1000.0 || H > 50000.0) return 0.0;//不在对流层范围内
+    if (H < -1000.0 || H > 40000.0) return 0.0;//不在对流层范围内
+
+    double base = 1.0 - 0.0000226 * (H - HIGHT0);
+    if (base <= 0.0) return 0.0;
 
     double RH=RH0*(exp(-0.0006396*(H-HIGHT0)));
-    double p=PRESSURE0*pow((1-0.0000226*(H-HIGHT0)),5.225);
+    double p=PRESSURE0*pow(base, 5.225);
     double T=TEMPERATURE0-0.0065*(H-HIGHT0);
     double e=RH*exp(-37.2465+0.213166*T-0.000256908*T*T);
     double h_w=11000;

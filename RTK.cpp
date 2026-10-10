@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <fstream>
 #include <cstring>
+#include <cmath>
 #include "RTK_Structs.h"
 #include "sockets.cpp"
 #include "ReadConfig.cpp"
@@ -191,10 +192,12 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
     }
 
     RAWDAT Raw;
+    PPRESULT BasRes, RovRes;
 
     printf("Starting RTK Debugging Flow...\n");
 
     int total_epochs = 0;
+    int rtk_success = 0;
 
     while (true) {
         int syn = GetSynObs(FBas, FRov, BasSock, RovSock, &Raw, cfg.IsFileData, SynThres);
@@ -203,15 +206,37 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
 
         total_epochs++;
 
-        // TODO: 单差 -> 周跳探测 -> 基准星选取 -> 双差 -> RTK 浮点解/固定解
-        // FormSDEpochObs(&Raw.BasEpk, &Raw.RovEpk, &Raw.SdObs);
-        // DetectCycleSlip(&Raw.SdObs);
-        // DetRefSat(&Raw.BasEpk, &Raw.RovEpk, &Raw.SdObs, &Raw.DDObs);
-        // RTKFloat(&Raw, &BasRes, &RovRes);
+        // 单差 -> 周跳探测 -> 相对定位浮点解
+        FormSDEpochObs(&Raw.BasEpk, &Raw.RovEpk, &Raw.SdObs);
+        DetectCycleSlip(&Raw.SdObs);
+        bool float_ok = RTKFloat(&Raw, &BasRes, &RovRes);
+        if (float_ok) rtk_success++;
 
-        printf("Sync epoch %d: TOW %.3f, Bas %d sats, Rov %d sats\n",
-               total_epochs, Raw.RovEpk.Time.SecOfWeek,
-               Raw.BasEpk.SatNum, Raw.RovEpk.SatNum);
+        // 约定：BasRes.Position != 0 时，IsSuccess == true 表示基站坐标由 SPP 估算；false 表示来自数据流已知点 (如 BESTPOS)
+        const char* baseTag = BasRes.IsSuccess ? " [Base:SPP]" : " [Base:BESTPOS]";
+        char lineBuf[512];
+        if (float_ok) {
+            double dLen = sqrt(Raw.DDObs.dPos[0] * Raw.DDObs.dPos[0] +
+                               Raw.DDObs.dPos[1] * Raw.DDObs.dPos[1] +
+                               Raw.DDObs.dPos[2] * Raw.DDObs.dPos[2]);
+            snprintf(lineBuf, sizeof(lineBuf),
+                     "Sync epoch %d: TOW %.3f, RTK Float OK%s, Ref(G%02d/C%02d), DD %d sats(G%d/C%d), "
+                     "dPos: [%.4f, %.4f, %.4f], Len: %.4f m, Sig0: %.4f m\n",
+                     total_epochs, Raw.RovEpk.Time.SecOfWeek,
+                     baseTag,
+                     Raw.DDObs.RefPrn[0], Raw.DDObs.RefPrn[1],
+                     Raw.DDObs.Sats, Raw.DDObs.DDSatNum[0], Raw.DDObs.DDSatNum[1],
+                     Raw.DDObs.dPos[0], Raw.DDObs.dPos[1], Raw.DDObs.dPos[2],
+                     dLen, RovRes.SigmaPos);
+        } else {
+            snprintf(lineBuf, sizeof(lineBuf),
+                     "Sync epoch %d: TOW %.3f, RTK Float FAILED%s (Bas %d sats, Rov %d sats, DD %d sats)\n",
+                     total_epochs, Raw.RovEpk.Time.SecOfWeek,
+                     baseTag,
+                     Raw.BasEpk.SatNum, Raw.RovEpk.SatNum, Raw.DDObs.Sats);
+        }
+        printf("%s", lineBuf);
+        if (fout.is_open()) fout << lineBuf;
     }
 
     if (cfg.IsFileData == 1) {
@@ -224,7 +249,22 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
 
     printf("\nRTK Processing Summary:\n");
     printf("Total Synced Epochs: %d\n", total_epochs);
+    printf("RTK Float Success:   %d (%.1f%%)\n", rtk_success, total_epochs > 0 ? (100.0 * rtk_success / total_epochs) : 0.0);
+    if (BasRes.IsSuccess) {
+        printf("Notice: Base position was obtained via SPP (approximate coordinates).\n");
+    }
     printf("Results saved to %s\n", cfg.ResFile);
+
+    if (fout.is_open()) {
+        fout << "\nRTK Processing Summary:\n";
+        fout << "Total Synced Epochs: " << total_epochs << "\n";
+        fout << "RTK Float Success:   " << rtk_success << " (" << std::fixed << std::setprecision(1)
+             << (total_epochs > 0 ? (100.0 * rtk_success / total_epochs) : 0.0) << "%)\n";
+        if (BasRes.IsSuccess) {
+            fout << "Notice: Base position was obtained via SPP (approximate coordinates).\n";
+        }
+        fout << "Results saved to " << cfg.ResFile << "\n";
+    }
 }
 
 int main(int argc, char* argv[])
@@ -256,5 +296,5 @@ int main(int argc, char* argv[])
         RunSPP(cfg, fout);
 
     fout.close();
-    return 1;
+    return 0;
 }
