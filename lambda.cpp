@@ -15,7 +15,7 @@
 *       integer least-squares estimation, J.Geodesy, Vol.79, 552-565, 2005
 *-----------------------------------------------------------------------------*/
 
-#define LOOPMAX     500000          /* 最大搜索循环计数 */
+#define LOOPMAX     30000           /* 最大搜索循环计数 (与 RTKLIB 一致) */
 #define SGN(x)      ((x)<=0.0?-1.0:1.0)
 #define ROUND(x)    (floor((x)+0.5))
 #define SWAP(x,y)   do {double tmp_; tmp_=x; x=y; y=tmp_;} while (0)
@@ -208,7 +208,6 @@ int search(int n, int m, const double *L, const double *D,
     free(S); free(dist); free(zb); free(z); free(step);
     
     if (c >= LOOPMAX) {
-        fprintf(stderr, "%s : search loop count overflow\n", __FILE__);
         return -1;
     }
     return 0;
@@ -263,3 +262,116 @@ int lambda(int n, int m, const double *a, const double *Q, double *F, double *s)
     free(L); free(D); free(Z); free(z); free(E);
     return info;
 }
+
+/* LAMBDA 整数模糊度固定与基线恢复 ------------------------------------------
+* 参数说明：
+*   Raw        : 原始数据与双差观测结构体指针
+*   Base, Rov  : 基站已知结果与流动站估计结果
+*   b_hat      : 浮点基线向量 (3 x 1)
+*   a_hat      : 浮点双差模糊度向量 (n_amb x 1)
+*   Qbb        : 坐标协因数阵 (3 x 3)
+*   Qaa        : 模糊度协因数阵 (n_amb x n_amb)
+*   Qba        : 坐标-模糊度互协因数阵 (3 x n_amb)
+*   ratioThres : Ratio 检验门限 (如 3.0)
+* 返回值：true 表示固定成功，false 表示保持浮点解
+*-----------------------------------------------------------------------------*/
+bool FixAmbiguity(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov,
+                  const Eigen::Vector3d& b_hat,
+                  const Eigen::VectorXd& a_hat,
+                  const Eigen::Matrix3d& Qbb,
+                  const Eigen::MatrixXd& Qaa,
+                  const Eigen::MatrixXd& Qba,
+                  double ratioThres)
+{
+    if (!Raw || !Base || !Rov) return false;
+    int n_amb = (int)a_hat.size();
+    if (n_amb <= 0) return false;
+
+    double *F = (double *)calloc(n_amb * 2, sizeof(double));
+    double s[2] = {0.0, 0.0};
+    if (!F) return false;
+
+    // 1. 调用 LAMBDA 算法搜索最优与次优整数解
+    int info = lambda(n_amb, 2, a_hat.data(), Qaa.data(), F, s);
+
+    double ratio = (info == 0 && s[0] > 1e-12) ? (s[1] / s[0]) : 0.0;
+    Raw->DDObs.Ratio = ratio;
+    Raw->DDObs.ResAmb[0] = s[0];
+    Raw->DDObs.ResAmb[1] = s[1];
+
+    for (int k = 0; k < n_amb && k < MAXCHANNUM * 2; ++k) {
+        Raw->DDObs.FixedAmb[k] = F[k];                 // 最优解
+        Raw->DDObs.FixedAmb[n_amb + k] = F[n_amb + k]; // 次优解
+    }
+
+    // 2. Ratio 检验与基线恢复
+    bool fixed = false;
+    if (info == 0 && ratio >= ratioThres && s[0] > 0.0) {
+        // 全模糊度集合固定成功
+        Raw->DDObs.bFixed = true;
+        Eigen::Map<const Eigen::VectorXd> a_check(F, n_amb);
+
+        // 3. 恢复固定解基线: b_check = b_hat - Qba * Qaa^{-1} * (a_hat - a_check)
+        Eigen::Vector3d b_check = b_hat - Qba * Qaa.partialPivLu().solve(a_hat - a_check);
+
+        Raw->DDObs.dPos[0] = b_check(0);
+        Raw->DDObs.dPos[1] = b_check(1);
+        Raw->DDObs.dPos[2] = b_check(2);
+
+        Eigen::Vector3d X_B(Raw->BasEpk.Pos[0], Raw->BasEpk.Pos[1], Raw->BasEpk.Pos[2]);
+        Rov->Position[0] = X_B[0] + b_check(0);
+        Rov->Position[1] = X_B[1] + b_check(1);
+        Rov->Position[2] = X_B[2] + b_check(2);
+
+        // 4. 固定解基线协方差: Q_bb_check = Qbb - Qba * Qaa^{-1} * Qab
+        Eigen::Matrix3d Q_bb_check = Qbb - Qba * Qaa.partialPivLu().solve(Qba.transpose());
+        Raw->DDObs.FixRMS[0] = (float)sqrt(std::max(0.0, Q_bb_check.trace() / 3.0));
+        fixed = true;
+    } else {
+        // 部分模糊度固定策略 (PAR): 当多系统高维搜索失败或受低高度角/GEO干扰时，尝试固定强几何 GPS 子集
+        int n_gps = 2 * Raw->DDObs.DDSatNum[0];
+        if (n_gps >= 8 && n_gps < n_amb) {
+            std::vector<double> F_gps(n_gps * 2, 0.0);
+            double s_gps[2] = {0.0, 0.0};
+            Eigen::VectorXd a_gps = a_hat.head(n_gps);
+            Eigen::MatrixXd Qaa_gps = Qaa.topLeftCorner(n_gps, n_gps);
+            Eigen::MatrixXd Qba_gps = Qba.leftCols(n_gps);
+
+            int info_gps = lambda(n_gps, 2, a_gps.data(), Qaa_gps.data(), F_gps.data(), s_gps);
+            double ratio_gps = (info_gps == 0 && s_gps[0] > 1e-12) ? (s_gps[1] / s_gps[0]) : 0.0;
+
+            if (info_gps == 0 && ratio_gps >= ratioThres && s_gps[0] > 0.0) {
+                Raw->DDObs.bFixed = true;
+                Raw->DDObs.Ratio = ratio_gps;
+                Raw->DDObs.ResAmb[0] = s_gps[0];
+                Raw->DDObs.ResAmb[1] = s_gps[1];
+
+                Eigen::Map<const Eigen::VectorXd> a_check_gps(F_gps.data(), n_gps);
+                Eigen::Vector3d b_check = b_hat - Qba_gps * Qaa_gps.partialPivLu().solve(a_gps - a_check_gps);
+
+                Raw->DDObs.dPos[0] = b_check(0);
+                Raw->DDObs.dPos[1] = b_check(1);
+                Raw->DDObs.dPos[2] = b_check(2);
+
+                Eigen::Vector3d X_B(Raw->BasEpk.Pos[0], Raw->BasEpk.Pos[1], Raw->BasEpk.Pos[2]);
+                Rov->Position[0] = X_B[0] + b_check(0);
+                Rov->Position[1] = X_B[1] + b_check(1);
+                Rov->Position[2] = X_B[2] + b_check(2);
+
+                Eigen::Matrix3d Q_bb_check = Qbb - Qba_gps * Qaa_gps.partialPivLu().solve(Qba_gps.transpose());
+                Raw->DDObs.FixRMS[0] = (float)sqrt(std::max(0.0, Q_bb_check.trace() / 3.0));
+                fixed = true;
+            } else {
+                Raw->DDObs.bFixed = false;
+                fixed = false;
+            }
+        } else {
+            Raw->DDObs.bFixed = false;
+            fixed = false;
+        }
+    }
+
+    free(F);
+    return fixed;
+}
+

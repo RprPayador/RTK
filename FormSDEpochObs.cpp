@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <Eigen/Dense>
+#include "lambda.h"
 
 using namespace Eigen;
 
@@ -178,10 +179,10 @@ void DetRefSat(const EPOCHOBS* EpkBas, const EPOCHOBS* EpkRov, SDEPOCHOBS* SDObs
     // 2. 遍历单差卫星，寻找各系统高度角最高且质量优良的卫星作为基准星 (必须在两站均具有有效轨道且高度角>=10度)
     for (int i = 0; i < SDObs->SatNum; i++) {
         SDSATOBS& sdobs = SDObs->SdSatObs[i];
-        if (sdobs.Valid == 0) continue; // 剔除失锁或周跳卫星
-
         int nRov = sdobs.nRov;
         int nBas = sdobs.nBas;
+
+        if (sdobs.Valid == 0) continue; // 剔除失锁或周跳卫星
 
         // 检查卫星轨道与 PVT 计算是否在基站和流动站均有效
         if (!EpkRov->SatPVT[nRov].Valid || !EpkBas->SatPVT[nBas].Valid) continue;
@@ -247,7 +248,7 @@ static MatrixXd BuildSubWeightMatrix(int nDD, double sigma) {
     return W_sub;
 }
 
-bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov){
+bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov, const ROVERCFGINFO& cfg){
     if (!Raw || !Base || !Rov) return false;
 
     // 1. 设置基站真实位置并计算基站卫星轨道与高度角
@@ -288,6 +289,7 @@ bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov){
         }
     }
     Vector3d X_B = s_fixed_XB;
+    DetectOutlier(&Raw->BasEpk); // 必须每历元计算基站 PIF 组合，供 ComputeGPSSatOrbitAtSignalTrans 计算轨道
     ComputeGPSSatOrbitAtSignalTrans(&Raw->BasEpk, Raw->GpsEph, Raw->BdsEph, Base->Position, Raw->BasEpk.SatPVT);
     for (int i = 0; i < Raw->BasEpk.SatNum; ++i) {
         if (Raw->BasEpk.SatPVT[i].Valid) {
@@ -348,7 +350,8 @@ bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov){
 
     // 5. 组装全局双差权矩阵 W (准对角分块矩阵)
     MatrixXd W = MatrixXd::Zero(l, l);
-    double sigP = 0.3, sigL = 0.01;
+    double sigP = (cfg.CodeNoise > 0.0) ? cfg.CodeNoise : 0.3;
+    double sigL = (cfg.CPNoise > 0.0)   ? cfg.CPNoise   : 0.003;
     if (m_DD > 0) {
         MatrixXd W_PG1 = BuildSubWeightMatrix(m_DD, sigP);
         MatrixXd W_LG1 = BuildSubWeightMatrix(m_DD, sigL);
@@ -405,7 +408,8 @@ bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov){
             if (!Raw->RovEpk.SatPVT[sd.nRov].Valid || !Raw->BasEpk.SatPVT[sd.nBas].Valid) continue;
             if (Vector3d(Raw->BasEpk.SatPVT[sd.nBas].SatPos).norm() < 1e6 ||
                 Vector3d(Raw->RovEpk.SatPVT[sd.nRov].SatPos).norm() < 1e6) continue;
-            if (Raw->RovEpk.SatPVT[sd.nRov].Elevation < 10.0 * Rad) continue;
+            double elev_mask = (cfg.ElevThreshold > 0.0) ? cfg.ElevThreshold * Rad : 10.0 * Rad;
+            if (Raw->RovEpk.SatPVT[sd.nRov].Elevation < elev_mask) continue;
 
             int sys = (sd.System == GPS) ? 0 : 1;
             if (ref_idx[sys] == -1) continue;
@@ -532,21 +536,21 @@ bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov){
     Raw->DDObs.dPos[0] = X_R_star[0] - X_B[0];
     Raw->DDObs.dPos[1] = X_R_star[1] - X_B[1];
     Raw->DDObs.dPos[2] = X_R_star[2] - X_B[2];
-    Raw->DDObs.bFixed = false;
 
     // 残差向量与验后单位权中误差
     VectorXd v = z - H * x_hat;
     double vTWv = (v.transpose() * W * v)(0);
     double sigma0 = (l > n) ? sqrt(std::max(0.0, vTWv / (l - n))) : 0.0;
     Rov->SigmaPos = sigma0;
-    Raw->DDObs.ResAmb[0] = sigma0;
 
-    // 暂存浮点双差模糊度
-    for (int k = 0; k < 2 * S && k < MAXCHANNUM * 4; ++k) {
-        if (3 + k < x_hat.size()) {
-            Raw->DDObs.FixedAmb[k] = x_hat(3 + k);
-        }
-    }
+    // 8. 提取浮点参数并调用 LAMBDA 执行模糊度搜索与固定基线恢复
+    Vector3d b_hat = X_R_star - X_B;
+    VectorXd a_hat = x_hat.tail(2 * S);
+    Matrix3d Qbb = Qxx.block<3, 3>(0, 0);
+    MatrixXd Qaa = Qxx.block(3, 3, 2 * S, 2 * S);
+    MatrixXd Qba = Qxx.block(0, 3, 3, 2 * S);
+
+    FixAmbiguity(Raw, Base, Rov, b_hat, a_hat, Qbb, Qaa, Qba, cfg.RatioThres);
 
     return true;
 }

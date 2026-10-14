@@ -405,7 +405,8 @@ int GetSynObs(FILE* FBas, FILE* FRov, SOCKET& BasSock, SOCKET& RovSock, RAWDAT* 
 void FormSDEpochObs(const EPOCHOBS *EpkA, const EPOCHOBS *EpkB, SDEPOCHOBS *SDObs);
 void DetectCycleSlip(SDEPOCHOBS* Obs);
 void DetRefSat(const EPOCHOBS* EpkA, const EPOCHOBS* EpkB, SDEPOCHOBS* SDObs, DDCOBS* DDObs);
-bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov);
+bool RTKFloat(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov, const ROVERCFGINFO& cfg);
+bool RTKFilter(RAWDAT* Raw, PPRESULT* Base, PPRESULT* Rov, RTKEKF* Ekf, const ROVERCFGINFO& cfg);
 
 // lambda
 int LD(int n, const double *Q, double *L, double *D);

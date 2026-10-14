@@ -193,11 +193,13 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
 
     RAWDAT Raw;
     PPRESULT BasRes, RovRes;
+    RTKEKF Ekf; 
 
-    printf("Starting RTK Debugging Flow...\n");
+    printf("Starting RTK Debugging Flow (%s)...\n", (cfg.RTKProcMode == 1) ? "EKF Mode" : "LSQ Mode");
 
     int total_epochs = 0;
     int rtk_success = 0;
+    int rtk_fixed = 0;
 
     while (true) {
         int syn = GetSynObs(FBas, FRov, BasSock, RovSock, &Raw, cfg.IsFileData, SynThres);
@@ -206,33 +208,44 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
 
         total_epochs++;
 
-        // 单差 -> 周跳探测 -> 相对定位浮点解
+        // 单差 -> 周跳探测 -> 相对定位解算 (EKF / LSQ 分流，并在内部集成 LAMBDA 模糊度固定)
         FormSDEpochObs(&Raw.BasEpk, &Raw.RovEpk, &Raw.SdObs);
         DetectCycleSlip(&Raw.SdObs);
-        bool float_ok = RTKFloat(&Raw, &BasRes, &RovRes);
-        if (float_ok) rtk_success++;
+
+        bool float_ok = false;
+        if (cfg.RTKProcMode == 1) {
+            float_ok = RTKFilter(&Raw, &BasRes, &RovRes, &Ekf, cfg);
+        } else {
+            float_ok = RTKFloat(&Raw, &BasRes, &RovRes, cfg);
+        }
+        if (float_ok) {
+            rtk_success++;
+            if (Raw.DDObs.bFixed) rtk_fixed++;
+        }
 
         // 约定：BasRes.Position != 0 时，IsSuccess == true 表示基站坐标由 SPP 估算；false 表示来自数据流已知点 (如 BESTPOS)
         const char* baseTag = BasRes.IsSuccess ? " [Base:SPP]" : " [Base:BESTPOS]";
+        const char* procTag = (cfg.RTKProcMode == 1) ? "EKF" : "LSQ";
+        const char* fixTag  = Raw.DDObs.bFixed ? "Fix" : "Float";
         char lineBuf[512];
         if (float_ok) {
             double dLen = sqrt(Raw.DDObs.dPos[0] * Raw.DDObs.dPos[0] +
                                Raw.DDObs.dPos[1] * Raw.DDObs.dPos[1] +
                                Raw.DDObs.dPos[2] * Raw.DDObs.dPos[2]);
             snprintf(lineBuf, sizeof(lineBuf),
-                     "Sync epoch %d: TOW %.3f, RTK Float OK%s, Ref(G%02d/C%02d), DD %d sats(G%d/C%d), "
-                     "dPos: [%.4f, %.4f, %.4f], Len: %.4f m, Sig0: %.4f m\n",
+                     "Sync epoch %d: TOW %.3f, %s %s OK%s, Ref(G%02d/C%02d), DD %d sats(G%d/C%d), "
+                     "dPos: [%.4f, %.4f, %.4f], Len: %.4f m, Ratio: %.2f, Sig0: %.4f\n",
                      total_epochs, Raw.RovEpk.Time.SecOfWeek,
-                     baseTag,
+                     procTag, fixTag, baseTag,
                      Raw.DDObs.RefPrn[0], Raw.DDObs.RefPrn[1],
                      Raw.DDObs.Sats, Raw.DDObs.DDSatNum[0], Raw.DDObs.DDSatNum[1],
                      Raw.DDObs.dPos[0], Raw.DDObs.dPos[1], Raw.DDObs.dPos[2],
-                     dLen, RovRes.SigmaPos);
+                     dLen, Raw.DDObs.Ratio, RovRes.SigmaPos);
         } else {
             snprintf(lineBuf, sizeof(lineBuf),
-                     "Sync epoch %d: TOW %.3f, RTK Float FAILED%s (Bas %d sats, Rov %d sats, DD %d sats)\n",
+                     "Sync epoch %d: TOW %.3f, %s Float FAILED%s (Bas %d sats, Rov %d sats, DD %d sats)\n",
                      total_epochs, Raw.RovEpk.Time.SecOfWeek,
-                     baseTag,
+                     procTag, baseTag,
                      Raw.BasEpk.SatNum, Raw.RovEpk.SatNum, Raw.DDObs.Sats);
         }
         printf("%s", lineBuf);
@@ -250,6 +263,7 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
     printf("\nRTK Processing Summary:\n");
     printf("Total Synced Epochs: %d\n", total_epochs);
     printf("RTK Float Success:   %d (%.1f%%)\n", rtk_success, total_epochs > 0 ? (100.0 * rtk_success / total_epochs) : 0.0);
+    printf("RTK Fixed Success:   %d (%.1f%%)\n", rtk_fixed, total_epochs > 0 ? (100.0 * rtk_fixed / total_epochs) : 0.0);
     if (BasRes.IsSuccess) {
         printf("Notice: Base position was obtained via SPP (approximate coordinates).\n");
     }
@@ -260,6 +274,8 @@ static void RunRTK(const ROVERCFGINFO& cfg, std::ofstream& fout)
         fout << "Total Synced Epochs: " << total_epochs << "\n";
         fout << "RTK Float Success:   " << rtk_success << " (" << std::fixed << std::setprecision(1)
              << (total_epochs > 0 ? (100.0 * rtk_success / total_epochs) : 0.0) << "%)\n";
+        fout << "RTK Fixed Success:   " << rtk_fixed << " (" << std::fixed << std::setprecision(1)
+             << (total_epochs > 0 ? (100.0 * rtk_fixed / total_epochs) : 0.0) << "%)\n";
         if (BasRes.IsSuccess) {
             fout << "Notice: Base position was obtained via SPP (approximate coordinates).\n";
         }
